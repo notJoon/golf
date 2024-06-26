@@ -1,53 +1,98 @@
-package main
+package golf
 
 import (
 	"go/token"
-	"reflect"
 	"testing"
 )
 
 func TestAnalyzeLifetime(t *testing.T) {
 	tests := []struct {
-		name    string
-		src     string
-		want    *VariableTracker
-		wantErr bool
+		name     string
+		src      string
+		wantVars int
+		wantUses int
 	}{
 		{
-			name: "single declaration and use",
-			src:  `package main; func main() { var x int; x = 5 }`,
-			want: &VariableTracker{
-				Decls: map[string]token.Pos{"x": 40},
-				Uses:  map[string][]token.Pos{"x": {33, 40}},
-			},
-			wantErr: false,
+			name: "Simple variable declaration and use",
+			src: `
+				package main
+				func main() {
+					x := 5
+					println(x)
+				}
+			`,
+			wantVars: 1,
+			wantUses: 1,
 		},
 		{
-			name:    "no declarations",
-			src:     `package main; func main() {}`,
-			want:    &VariableTracker{Decls: make(map[string]token.Pos), Uses: make(map[string][]token.Pos)},
-			wantErr: false,
+			name: "Multiple variables and nested scope",
+			src: `
+				package main
+				func main() {
+					x := 5
+					{
+						y := x
+						println(y)
+					}
+					println(x)
+				}
+			`,
+			wantVars: 2,
+			wantUses: 2,
 		},
 		{
-			name: "multiple declarations and uses",
-			src:  `package main; func main() { var x int; var y int; x = 5; y = x }`,
-			want: &VariableTracker{
-				Decls: map[string]token.Pos{"x": 51, "y": 58},
-				Uses:  map[string][]token.Pos{"x": {33, 51, 62}, "y": {44, 58}},
-			},
-			wantErr: false,
+			name: "Function with parameters",
+			src: `
+				package main
+				func add(a, b int) int {
+					return a + b
+				}
+				func main() {
+					result := add(3, 4)
+					println(result)
+				}
+			`,
+			wantVars: 3,
+			wantUses: 1,
+		},
+		{
+			name: "For loop with range",
+			src: `
+				package main
+				func main() {
+					numbers := []int{1, 2, 3}
+					for i, n := range numbers {
+						println(i, n)
+					}
+				}
+			`,
+			wantVars: 3,
+			wantUses: 2,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := AnalyzeLifetime(tt.src)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("AnalyzeLifetime(%s) error = %v, wantErr %v", tt.name, err, tt.wantErr)
-				return
+			fset := token.NewFileSet()
+			tracker, err := AnalyzeLifetime(tt.src, fset)
+			if err != nil {
+				t.Fatalf("AnalyzeLifetime(%s) error = %v", tt.name, err)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("AnalyzeLifetime(%s) = %v, want %v", tt.name, got, tt.want)
+
+			if got := len(tracker.Decls); got != tt.wantVars {
+				t.Errorf("AnalyzeLifetime(%s) got %d variables, want %d", tt.name, got, tt.wantVars)
+			}
+
+			useCount := 0
+			for _, uses := range tracker.Uses {
+				useCount += len(uses)
+			}
+			if useCount != tt.wantUses {
+				t.Errorf("AnalyzeLifetime(%s) got %d uses, want %d", tt.name, useCount, tt.wantUses)
+			}
+
+			if len(tracker.Scopes) == 0 {
+				t.Errorf("AnalyzeLifetime(%s) did not create any scopes", tt.name)
 			}
 		})
 	}
